@@ -186,7 +186,7 @@ body{font-family:'Jost',sans-serif;background:var(--panel2);color:#d4cfc8;displa
 .sc-et{font-size:14px;font-weight:600;margin-bottom:4px;letter-spacing:.02em}
 .sc-ed{font-size:13px;line-height:1.6}
 /* RSVP */
-.rv-b{padding:72px 48px;text-align:center}
+.rv-b{padding:72px 48px;text-align:center;position:relative;min-height:460px}
 .rv-f{max-width:380px;margin:40px auto 0;display:flex;flex-direction:column;gap:10px}
 .rv-i{width:100%;border-radius:2px;padding:12px 15px;font-size:13px;font-family:'Jost',sans-serif;outline:none;border:1px solid;background:transparent;transition:.15s}
 .rv-s{width:100%;border-radius:2px;padding:12px 15px;font-size:13px;font-family:'Jost',sans-serif;outline:none;border:1px solid;background:transparent;-webkit-appearance:none}
@@ -245,7 +245,7 @@ body{font-family:'Jost',sans-serif;background:var(--panel2);color:#d4cfc8;displa
 .overlay-img{padding:0;object-fit:cover}
 .editor-element{
 position:absolute;cursor:move;touch-action:none;user-select:none;
-border:1px dashed rgba(0,0,0,.2);transform-origin:center center;
+outline:1px dashed rgba(255,255,255,.2);transform-origin:center center;
 }
 .editor-selected{outline:2px solid var(--gold);border-color:var(--gold)}
 .editor-resize-handle{
@@ -442,7 +442,7 @@ const D={
   story:{type:'story',sectionLabel:'Наша история',title:'Как всё началось',bgColor:'#ffffff',textColor:'#2c2c2c',accentColor:'#c9a96e',items:[{year:'2019',month:'Март',title:'Первая встреча',text:'Мы познакомились на вечеринке общих друзей. Один взгляд — и что-то изменилось навсегда.'},{year:'2021',month:'Август',title:'Первое путешествие',text:'Поехали к морю. Поняли, что хотим путешествовать только вдвоём.'},{year:'2024',month:'Декабрь',title:'Предложение',text:'Он сделал предложение в том кафе, где мы впервые выпили кофе. Она сказала «да».'}]},
   gallery:{type:'gallery',sectionLabel:'Фотографии',title:'Наши моменты',bgColor:'#f5f0e8',cols:'3',photos:[{url:'',alt:''},{url:'',alt:''},{url:'',alt:''},{url:'',alt:''},{url:'',alt:''},{url:'',alt:''}]},
   schedule:{type:'schedule',sectionLabel:'Программа дня',title:'День свадьбы',bgColor:'#ffffff',textColor:'#2c2c2c',borderColor:'#e8e0d0',items:[{time:'14:00',icon:'🥂',title:'Сбор гостей',desc:'Приветственный коктейль и живая музыка.'},{time:'15:00',icon:'💍',title:'Церемония',desc:'Официальное бракосочетание.'},{time:'16:30',icon:'📷',title:'Фотосессия',desc:'Совместные фотографии молодожёнов и гостей.'},{time:'18:00',icon:'🍾',title:'Банкет',desc:'Торжественный ужин, тосты, праздничная программа.'},{time:'23:00',icon:'🎉',title:'Вечеринка',desc:'Танцы и веселье до утра.'}]},
-  rsvp:{type:'rsvp',sectionLabel:'Подтверждение',title:'Придёте?',subtitle:'Пожалуйста, подтвердите участие до 1 мая 2025 года',bgColor:'#2c2b29',textColor:'#faf7f2',accentColor:'#c9a96e',buttonText:'Подтвердить участие',showGuests:true,showMessage:true},
+  rsvp:{type:'rsvp',sectionLabel:'Подтверждение',title:'Придёте?',subtitle:'Пожалуйста, подтвердите участие до 1 мая 2025 года',bgColor:'#2c2b29',textColor:'#faf7f2',accentColor:'#c9a96e',buttonText:'Подтвердить участие',showGuests:true,showMessage:true,elements:[{id:'label',type:'label',x:48,y:64,width:620,height:26,rotation:0},{id:'title',type:'title',x:48,y:98,width:620,height:74,rotation:0},{id:'subtitle',type:'subtitle',x:48,y:176,width:620,height:52,rotation:0},{id:'fields',type:'fields',x:170,y:240,width:380,height:168,rotation:0},{id:'button',type:'button',x:170,y:414,width:380,height:52,rotation:0}]},
   map:{type:'map',sectionLabel:'Место проведения',title:'Как добраться',venueName:'Ресторан «Золотой сад»',address:'г. Москва, ул. Садовая, 12',bgColor:'#faf7f2',textColor:'#2c2c2c',accentColor:'#c9a96e',mapsUrl:'',mapsEmbed:''},
   contacts:{type:'contacts',sectionLabel:'Контакты',title:'Свяжитесь с нами',bgColor:'#ffffff',textColor:'#2c2c2c',accentColor:'#c9a96e',items:[{icon:'📞',name:'Невеста',value:'+7 999 000-00-01'},{icon:'📞',name:'Жених',value:'+7 999 000-00-02'},{icon:'✉️',name:'Email',value:'wedding@example.com'}]},
   quote:{type:'quote',text:'Любовь — это когда счастье другого важнее твоего собственного.',author:'Роберт А. Хайнлайн',bgColor:'#f0ebe0',textColor:'#2c2c2c',accentColor:'#c9a96e'},
@@ -501,9 +501,10 @@ function render(){
   const site=document.getElementById('csite'),es=document.getElementById('estate');
   site.innerHTML='';
   if(!S.blocks.length){site.appendChild(es);es.style.display='flex';renderRight();renderOverlayTools();updUB();return}
+  S.blocks.forEach(ensureBlockElements);
   site.appendChild(mkDz(0));
   S.blocks.forEach((b,i)=>{site.appendChild(mkCB(b,i));site.appendChild(mkDz(i+1))});
-  renderRight();renderOverlayTools();updUB();
+  renderRight();renderOverlayTools();updUB();initTransforms();
 }
 function mkDz(idx){const z=document.createElement('div');z.className='dz';z.dataset.idx=idx;z.textContent='+ Добавить блок здесь';return z}
 function mkCB(b,i){
@@ -520,11 +521,113 @@ function mkCB(b,i){
   renderOverlaysForBlock(w,b);
   return w;
 }
-function renderCB(id){const old=document.getElementById('cb-'+id);if(!old)return;const i=S.blocks.findIndex(b=>b.id===id);const ne=mkCB(S.blocks[i],i);old.replaceWith(ne);if(S.sel===id)ne.classList.add('sel');renderOverlayTools()}
+function renderCB(id){const old=document.getElementById('cb-'+id);if(!old)return;const i=S.blocks.findIndex(b=>b.id===id);const ne=mkCB(S.blocks[i],i);old.replaceWith(ne);if(S.sel===id)ne.classList.add('sel');renderOverlayTools();initTransforms()}
+
+function initTransforms(){
+  document.querySelectorAll('.editor-element').forEach(el=>{
+    if(!el.dataset.id)return;
+    makeDraggable(el);
+    makeResizable(el);
+    makeRotatable(el);
+  });
+}
+function makeDraggable(el){
+  let startX,startY,origX,origY;
+  if(el.dataset.dragReady==='1')return;
+  el.dataset.dragReady='1';
+  el.onmousedown=e=>{
+    if(e.target.classList.contains('editor-resize-handle')||e.target.classList.contains('editor-rotate-handle'))return;
+    e.preventDefault();
+    startX=e.clientX;
+    startY=e.clientY;
+    origX=parseFloat(el.style.left)||0;
+    origY=parseFloat(el.style.top)||0;
+    document.onmousemove=ev=>{
+      let x=origX+(ev.clientX-startX);
+      let y=origY+(ev.clientY-startY);
+      el.style.left=x+"px";
+      el.style.top=y+"px";
+      const item=getBlockElementByDataId(el.dataset.id);
+      if(item){item.element.x=Math.round(x);item.element.y=Math.round(y);}
+    };
+    document.onmouseup=()=>{
+      document.onmousemove=null;
+      const item=getBlockElementByDataId(el.dataset.id);
+      if(item)markDirty();
+    };
+  };
+}
+function makeResizable(el){
+  if(el.querySelector('.editor-resize-handle'))return;
+  ['bottom-right'].forEach(dir=>{
+    const h=document.createElement('div');
+    h.className='editor-resize-handle';
+    h.dataset.dir=dir;
+    h.style.display='block';
+    h.onmousedown=e=>{
+      e.preventDefault();e.stopPropagation();
+      const startX=e.clientX,startY=e.clientY;
+      const startW=parseFloat(el.style.width)||el.offsetWidth;
+      const startH=parseFloat(el.style.height)||el.offsetHeight;
+      document.onmousemove=ev=>{
+        const w=Math.max(60,startW+(ev.clientX-startX));
+        const h2=Math.max(24,startH+(ev.clientY-startY));
+        el.style.width=w+'px';
+        el.style.height=h2+'px';
+        const item=getBlockElementByDataId(el.dataset.id);
+        if(item){item.element.width=Math.round(w);item.element.height=Math.round(h2);}
+      };
+      document.onmouseup=()=>{document.onmousemove=null;markDirty();};
+    };
+    el.appendChild(h);
+  });
+}
+function makeRotatable(el){
+  if(el.querySelector('.editor-rotate-handle'))return;
+  const h=document.createElement('div');
+  h.className='editor-rotate-handle';
+  h.style.display='block';
+  h.onmousedown=e=>{
+    e.preventDefault();e.stopPropagation();
+    const rect=el.getBoundingClientRect();
+    const cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
+    document.onmousemove=ev=>{
+      const angle=Math.round(Math.atan2(ev.clientY-cy,ev.clientX-cx)*180/Math.PI);
+      el.style.transform=`rotate(${angle}deg)`;
+      const item=getBlockElementByDataId(el.dataset.id);
+      if(item)item.element.rotation=angle;
+    };
+    document.onmouseup=()=>{document.onmousemove=null;markDirty();};
+  };
+  el.appendChild(h);
+}
 
 const SNAP_GRID=10;
 const SNAP_THRESHOLD=6;
 function ensureOverlays(block){if(!Array.isArray(block.overlays))block.overlays=[];return block.overlays}
+function ensureBlockElements(block){
+  if(block.type!=='rsvp')return;
+  if(Array.isArray(block.elements)&&block.elements.length)return;
+  block.elements=dp(D.rsvp.elements||[]);
+}
+function getBlockElement(block,elementType){
+  ensureBlockElements(block);
+  return block.elements.find(el=>el.type===elementType);
+}
+function elStyle(el){
+  return `left:${el.x}px;top:${el.y}px;width:${el.width}px;height:${el.height}px;transform:rotate(${el.rotation||0}deg)`;
+}
+function parseEditorElementId(dataId){
+  const m=(dataId||'').match(/^(.*)-([^-]+)$/);
+  if(!m)return null;
+  return {blockId:m[1],type:m[2]};
+}
+function getBlockElementByDataId(dataId){
+  const parsed=parseEditorElementId(dataId);if(!parsed)return null;
+  const block=S.blocks.find(x=>x.id===parsed.blockId);if(!block)return null;
+  const element=getBlockElement(block,parsed.type);if(!element)return null;
+  return {block,element};
+}
 function normalizeElement(el){
   if(el.width==null) el.width=el.w??140;
   if(el.height==null) el.height=el.h??50;
@@ -611,7 +714,20 @@ function rGL(b){const photos=(b.photos||[]).map(p=>`<div class="gl-i">${p.url?`<
 
 function rSC(b){const items=(b.items||[]).map(it=>`<div class="sc-r" style="border-color:${b.borderColor||'#e8e0d0'}"><div class="sc-tm" style="color:${b.textColor}">${it.icon?`<span class="sc-ic">${it.icon}</span>`:''}${e(it.time)}</div><div><div class="sc-et" style="color:${b.textColor}">${e(it.title)}</div><div class="sc-ed" style="color:${b.textColor}65">${e(it.desc)}</div></div></div>`).join('');return`<div class="sc-b" style="background:${b.bgColor}"><div class="sh"><span class="sl" style="color:#c9a96e">${e(b.sectionLabel)}</span><div class="stit" style="color:${b.textColor}">${e(b.title)}</div></div><div class="sc-i">${items}</div></div>`}
 
-function rRV(b){return`<div class="rv-b" style="background:${b.bgColor}"><span class="sl" style="color:${b.accentColor}">${e(b.sectionLabel)}</span><div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:300;font-style:italic;color:${b.textColor};margin-top:8px">${e(b.title)}</div>${b.subtitle?`<p style="font-size:13px;color:${b.textColor}70;margin-top:10px;line-height:1.6">${e(b.subtitle)}</p>`:''}<div class="rv-f"><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Ваше имя и фамилия" readonly/><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Телефон или Email" readonly/><select class="rv-s" style="border-color:${b.accentColor}40;color:${b.textColor}90;background:${b.bgColor}"><option>✓ Буду присутствовать</option><option>✗ Не смогу прийти</option></select>${b.showGuests?`<input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Количество гостей" type="number" readonly/>`:''}${b.showMessage?`<textarea class="rv-ta" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Пожелания молодожёнам..." readonly></textarea>`:''}<button class="rv-btn" style="background:${b.accentColor};color:${b.bgColor}">${e(b.buttonText)}</button></div></div>`}
+function rRV(b){
+  const label=getBlockElement(b,'label');
+  const title=getBlockElement(b,'title');
+  const subtitle=getBlockElement(b,'subtitle');
+  const fields=getBlockElement(b,'fields');
+  const button=getBlockElement(b,'button');
+  return`<div class="rv-b" style="background:${b.bgColor}">
+    <div class="editor-element" data-id="${b.id}-label" style="${elStyle(label)}"><span class="sl" style="color:${b.accentColor}">${e(b.sectionLabel)}</span></div>
+    <div class="editor-element" data-id="${b.id}-title" style="${elStyle(title)}"><div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:300;font-style:italic;color:${b.textColor}">${e(b.title)}</div></div>
+    <div class="editor-element" data-id="${b.id}-subtitle" style="${elStyle(subtitle)}">${b.subtitle?`<p style="font-size:13px;color:${b.textColor}70;line-height:1.6">${e(b.subtitle)}</p>`:''}</div>
+    <div class="editor-element" data-id="${b.id}-fields" style="${elStyle(fields)}"><div class="rv-f" style="margin:0;max-width:100%"><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Ваше имя и фамилия" readonly/><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Телефон или Email" readonly/><select class="rv-s" style="border-color:${b.accentColor}40;color:${b.textColor}90;background:${b.bgColor}"><option>✓ Буду присутствовать</option><option>✗ Не смогу прийти</option></select>${b.showGuests?`<input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Количество гостей" type="number" readonly/>`:''}${b.showMessage?`<textarea class="rv-ta" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Пожелания молодожёнам..." readonly></textarea>`:''}</div></div>
+    <div class="editor-element" data-id="${b.id}-button" style="${elStyle(button)}"><button class="rv-btn" style="background:${b.accentColor};color:${b.bgColor}">${e(b.buttonText)}</button></div>
+  </div>`
+}
 
 function rMP(b){const embed=b.mapsEmbed?`<iframe src="${b.mapsEmbed}" allowfullscreen="" loading="lazy"></iframe>`:`<div class="mp-ph"><div class="mp-pi">📍</div><div class="mp-pt" style="color:${b.textColor}60">Вставьте ссылку для встраивания карты</div></div>`;return`<div class="mp-b" style="background:${b.bgColor}"><div class="sh"><span class="sl" style="color:${b.accentColor}">${e(b.sectionLabel)}</span><div class="stit" style="color:${b.textColor}">${e(b.title)}</div></div><div class="mp-e">${embed}</div><div class="mp-v"><div class="mp-vn" style="color:${b.textColor}">${e(b.venueName)}</div><div class="mp-va" style="color:${b.textColor}70">${e(b.address)}</div>${b.mapsUrl?`<a class="mp-vl" href="${b.mapsUrl}" target="_blank" style="color:${b.accentColor}">Открыть в Google Maps →</a>`:''}</div></div>`}
 
