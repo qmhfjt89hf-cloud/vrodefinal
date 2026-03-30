@@ -71,6 +71,9 @@ body{font-family:'Jost',sans-serif;background:var(--panel2);color:#d4cfc8;displa
 
 /* Canvas blocks */
 .cb{position:relative;cursor:default}
+.editor-block{position:relative;width:100%}
+.block-canvas{position:relative;min-height:200px}
+.block-resize-handle{height:6px;cursor:ns-resize;background:rgba(0,0,0,.1)}
 .cbo{position:absolute;inset:0;opacity:0;transition:.15s opacity;pointer-events:none;z-index:10;outline:2px solid transparent;outline-offset:-2px}
 .cb:hover .cbo{opacity:1;outline-color:rgba(201,169,110,.5)}
 .cb.sel .cbo{opacity:1;outline-color:var(--gold);background:rgba(201,169,110,.04)}
@@ -478,10 +481,10 @@ function addBlock(type,idx){
   const b={...dp(D[type]),id:uid()};
   pushH();
   if(idx!==undefined) S.blocks.splice(idx,0,b); else S.blocks.push(b);
-  S.sel=b.id; render(); markDirty(); toast('Блок добавлен');
+  S.sel=b.id; render(); updateBlockSize(b.id); markDirty(); toast('Блок добавлен');
   setTimeout(()=>document.getElementById('cb-'+b.id)?.scrollIntoView({behavior:'smooth',block:'nearest'}),80);
 }
-function removeBlock(id){pushH();S.blocks=S.blocks.filter(b=>b.id!==id);if(S.sel===id)S.sel=null;render();markDirty()}
+function removeBlock(id){pushH();S.blocks=S.blocks.filter(b=>b.id!==id);if(S.sel===id)S.sel=null;render();updateBlockSize();markDirty()}
 function moveBlock(id,dir){const i=S.blocks.findIndex(b=>b.id===id),ni=i+dir;if(ni<0||ni>=S.blocks.length)return;pushH();[S.blocks[i],S.blocks[ni]]=[S.blocks[ni],S.blocks[i]];render();markDirty()}
 function dupBlock(id){const i=S.blocks.findIndex(b=>b.id===id);const c={...dp(S.blocks[i]),id:uid()};pushH();S.blocks.splice(i+1,0,c);S.sel=c.id;render();markDirty();toast('Блок продублирован')}
 function selBlock(id){S.sel=id;S.ovSel=null;document.querySelectorAll('.cb').forEach(el=>el.classList.toggle('sel',el.id==='cb-'+id));renderRight();renderOverlayTools()}
@@ -497,6 +500,37 @@ function cvDrop(e){e.preventDefault();document.querySelectorAll('.dz').forEach(e
 function cvDragLeave(e){if(!e.relatedTarget||!e.currentTarget.contains(e.relatedTarget))document.querySelectorAll('.dz').forEach(el=>el.classList.remove('on'))}
 
 // ════════════ RENDER ════════════
+function getRenderableHtml(b){
+  if(b.type==='rsvp') return rRV(b);
+  return bHTML(b);
+}
+function renderBlock(b){
+  ensureBlockElements(b);
+  const contentEl=b.elements[0]||{id:'content',type:'content',x:0,y:0,width:720,height:Math.max(b.height||200,200),rotation:0};
+  const inner=b.type==='rsvp'
+    ? getRenderableHtml(b)
+    : `<div class="editor-element" data-id="${b.id}-${contentEl.type}" style="${elStyle(contentEl)}">${getRenderableHtml(b)}</div>`;
+  return `<div class="editor-block" id="block-${b.id}"><div class="block-canvas" style="height:${Math.max(b.height||200,200)}px">${inner}</div><div class="block-resize-handle" data-block-id="${b.id}"></div></div>`;
+}
+function updateBlockSize(blockId){
+  if(!blockId){S.blocks.forEach(b=>updateBlockSize(b.id));return;}
+  const blockNode=document.querySelector(`#block-${blockId}`);if(!blockNode)return;
+  const canvas=blockNode.querySelector('.block-canvas');if(!canvas)return;
+  const elements=canvas.querySelectorAll('.editor-element');
+  let maxBottom=0;
+  const parentRect=canvas.getBoundingClientRect();
+  elements.forEach(el=>{
+    const rect=el.getBoundingClientRect();
+    const bottom=rect.bottom-parentRect.top;
+    if(bottom>maxBottom)maxBottom=bottom;
+  });
+  const block=S.blocks.find(x=>x.id===blockId);
+  const manual=block?.height||0;
+  const next=Math.max(200,Math.ceil(maxBottom+80),manual);
+  canvas.style.height=next+'px';
+  if(block) block.height=next;
+}
+
 function render(){
   const site=document.getElementById('csite'),es=document.getElementById('estate');
   site.innerHTML='';
@@ -504,7 +538,7 @@ function render(){
   S.blocks.forEach(ensureBlockElements);
   site.appendChild(mkDz(0));
   S.blocks.forEach((b,i)=>{site.appendChild(mkCB(b,i));site.appendChild(mkDz(i+1))});
-  renderRight();renderOverlayTools();updUB();initTransforms();
+  renderRight();renderOverlayTools();updUB();initTransforms();initBlockResizeHandles();updateBlockSize();
 }
 function mkDz(idx){const z=document.createElement('div');z.className='dz';z.dataset.idx=idx;z.textContent='+ Добавить блок здесь';return z}
 function mkCB(b,i){
@@ -517,7 +551,7 @@ function mkCB(b,i){
   const dh=document.createElement('div');dh.className='cdh';dh.title='Перетащить';dh.draggable=true;dh.innerHTML='⠿';
   dh.addEventListener('dragstart',ev=>blkDs(ev,b.id));dh.addEventListener('dragend',blkDe);
   ov.appendChild(dh);w.appendChild(ov);
-  const cnt=document.createElement('div');cnt.innerHTML=bHTML(b);w.appendChild(cnt);
+  const cnt=document.createElement('div');cnt.innerHTML=renderBlock(b);w.appendChild(cnt);
   renderOverlaysForBlock(w,b);
   return w;
 }
@@ -538,22 +572,24 @@ function makeDraggable(el){
   el.onmousedown=e=>{
     if(e.target.classList.contains('editor-resize-handle')||e.target.classList.contains('editor-rotate-handle'))return;
     e.preventDefault();
-    startX=e.clientX;
-    startY=e.clientY;
-    origX=parseFloat(el.style.left)||0;
-    origY=parseFloat(el.style.top)||0;
+    const canvas=el.closest('.block-canvas');
+    startX=e.clientX;startY=e.clientY;
+    origX=parseFloat(el.style.left)||0;origY=parseFloat(el.style.top)||0;
     document.onmousemove=ev=>{
-      let x=origX+(ev.clientX-startX);
-      let y=origY+(ev.clientY-startY);
-      el.style.left=x+"px";
-      el.style.top=y+"px";
+      const w=parseFloat(el.style.width)||el.offsetWidth;
+      const h=parseFloat(el.style.height)||el.offsetHeight;
+      const maxX=Math.max(0,(canvas?.clientWidth||w)-w);
+      const maxY=Math.max(0,(canvas?.clientHeight||h)-h);
+      let x=Math.max(0,Math.min(origX+(ev.clientX-startX),maxX));
+      let y=Math.max(0,Math.min(origY+(ev.clientY-startY),maxY));
+      el.style.left=x+'px';el.style.top=y+'px';
       const item=getBlockElementByDataId(el.dataset.id);
-      if(item){item.element.x=Math.round(x);item.element.y=Math.round(y);}
+      if(item){item.element.x=Math.round(x);item.element.y=Math.round(y);updateBlockSize(item.block.id);}
     };
     document.onmouseup=()=>{
       document.onmousemove=null;
       const item=getBlockElementByDataId(el.dataset.id);
-      if(item)markDirty();
+      if(item){updateBlockSize(item.block.id);markDirty();}
     };
   };
 }
@@ -570,14 +606,17 @@ function makeResizable(el){
       const startW=parseFloat(el.style.width)||el.offsetWidth;
       const startH=parseFloat(el.style.height)||el.offsetHeight;
       document.onmousemove=ev=>{
-        const w=Math.max(60,startW+(ev.clientX-startX));
-        const h2=Math.max(24,startH+(ev.clientY-startY));
+        const canvas=el.closest('.block-canvas');
+        const maxW=Math.max(60,(canvas?.clientWidth||startW)-((parseFloat(el.style.left)||0)));
+        const maxH=Math.max(24,(canvas?.clientHeight||startH)-((parseFloat(el.style.top)||0)));
+        const w=Math.max(60,Math.min(startW+(ev.clientX-startX),maxW));
+        const h2=Math.max(24,Math.min(startH+(ev.clientY-startY),maxH));
         el.style.width=w+'px';
         el.style.height=h2+'px';
         const item=getBlockElementByDataId(el.dataset.id);
-        if(item){item.element.width=Math.round(w);item.element.height=Math.round(h2);}
+        if(item){item.element.width=Math.round(w);item.element.height=Math.round(h2);updateBlockSize(item.block.id);}
       };
-      document.onmouseup=()=>{document.onmousemove=null;markDirty();};
+      document.onmouseup=()=>{document.onmousemove=null;const item=getBlockElementByDataId(el.dataset.id);if(item)updateBlockSize(item.block.id);markDirty();};
     };
     el.appendChild(h);
   });
@@ -595,9 +634,9 @@ function makeRotatable(el){
       const angle=Math.round(Math.atan2(ev.clientY-cy,ev.clientX-cx)*180/Math.PI);
       el.style.transform=`rotate(${angle}deg)`;
       const item=getBlockElementByDataId(el.dataset.id);
-      if(item)item.element.rotation=angle;
+      if(item){item.element.rotation=angle;updateBlockSize(item.block.id);}
     };
-    document.onmouseup=()=>{document.onmousemove=null;markDirty();};
+    document.onmouseup=()=>{document.onmousemove=null;const item=getBlockElementByDataId(el.dataset.id);if(item)updateBlockSize(item.block.id);markDirty();};
   };
   el.appendChild(h);
 }
@@ -606,9 +645,16 @@ const SNAP_GRID=10;
 const SNAP_THRESHOLD=6;
 function ensureOverlays(block){if(!Array.isArray(block.overlays))block.overlays=[];return block.overlays}
 function ensureBlockElements(block){
-  if(block.type!=='rsvp')return;
-  if(Array.isArray(block.elements)&&block.elements.length)return;
-  block.elements=dp(D.rsvp.elements||[]);
+  if(!Array.isArray(block.elements)) block.elements=[];
+  if(block.type==='rsvp'){
+    if(!block.elements.length) block.elements=dp(D.rsvp.elements||[]);
+  }else if(['hero','gallery','map','schedule'].includes(block.type)){
+    if(!block.elements.length){
+      block.elements=[{id:'content',type:'content',x:0,y:0,width:720,height:block.height||320,rotation:0}];
+    }
+  }
+  block.elements=block.elements.map(normalizeElement);
+  if(block.height==null) block.height=200;
 }
 function getBlockElement(block,elementType){
   ensureBlockElements(block);
@@ -714,19 +760,18 @@ function rGL(b){const photos=(b.photos||[]).map(p=>`<div class="gl-i">${p.url?`<
 
 function rSC(b){const items=(b.items||[]).map(it=>`<div class="sc-r" style="border-color:${b.borderColor||'#e8e0d0'}"><div class="sc-tm" style="color:${b.textColor}">${it.icon?`<span class="sc-ic">${it.icon}</span>`:''}${e(it.time)}</div><div><div class="sc-et" style="color:${b.textColor}">${e(it.title)}</div><div class="sc-ed" style="color:${b.textColor}65">${e(it.desc)}</div></div></div>`).join('');return`<div class="sc-b" style="background:${b.bgColor}"><div class="sh"><span class="sl" style="color:#c9a96e">${e(b.sectionLabel)}</span><div class="stit" style="color:${b.textColor}">${e(b.title)}</div></div><div class="sc-i">${items}</div></div>`}
 
+function rRVElementContent(b,type){
+  if(type==='label') return `<span class="sl" style="color:${b.accentColor}">${e(b.sectionLabel)}</span>`;
+  if(type==='title') return `<div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:300;font-style:italic;color:${b.textColor}">${e(b.title)}</div>`;
+  if(type==='subtitle') return b.subtitle?`<p style="font-size:13px;color:${b.textColor}70;line-height:1.6">${e(b.subtitle)}</p>`:'';
+  if(type==='fields') return `<div class="rv-f" style="margin:0;max-width:100%"><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Ваше имя и фамилия" readonly/><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Телефон или Email" readonly/><select class="rv-s" style="border-color:${b.accentColor}40;color:${b.textColor}90;background:${b.bgColor}"><option>✓ Буду присутствовать</option><option>✗ Не смогу прийти</option></select>${b.showGuests?`<input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Количество гостей" type="number" readonly/>`:''}${b.showMessage?`<textarea class="rv-ta" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Пожелания молодожёнам..." readonly></textarea>`:''}</div>`;
+  if(type==='button') return `<button class="rv-btn" style="background:${b.accentColor};color:${b.bgColor}">${e(b.buttonText)}</button>`;
+  return '';
+}
+
 function rRV(b){
-  const label=getBlockElement(b,'label');
-  const title=getBlockElement(b,'title');
-  const subtitle=getBlockElement(b,'subtitle');
-  const fields=getBlockElement(b,'fields');
-  const button=getBlockElement(b,'button');
-  return`<div class="rv-b" style="background:${b.bgColor}">
-    <div class="editor-element" data-id="${b.id}-label" style="${elStyle(label)}"><span class="sl" style="color:${b.accentColor}">${e(b.sectionLabel)}</span></div>
-    <div class="editor-element" data-id="${b.id}-title" style="${elStyle(title)}"><div style="font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:300;font-style:italic;color:${b.textColor}">${e(b.title)}</div></div>
-    <div class="editor-element" data-id="${b.id}-subtitle" style="${elStyle(subtitle)}">${b.subtitle?`<p style="font-size:13px;color:${b.textColor}70;line-height:1.6">${e(b.subtitle)}</p>`:''}</div>
-    <div class="editor-element" data-id="${b.id}-fields" style="${elStyle(fields)}"><div class="rv-f" style="margin:0;max-width:100%"><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Ваше имя и фамилия" readonly/><input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Телефон или Email" readonly/><select class="rv-s" style="border-color:${b.accentColor}40;color:${b.textColor}90;background:${b.bgColor}"><option>✓ Буду присутствовать</option><option>✗ Не смогу прийти</option></select>${b.showGuests?`<input class="rv-i" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Количество гостей" type="number" readonly/>`:''}${b.showMessage?`<textarea class="rv-ta" style="border-color:${b.accentColor}40;color:${b.textColor};background:${b.textColor}08" placeholder="Пожелания молодожёнам..." readonly></textarea>`:''}</div></div>
-    <div class="editor-element" data-id="${b.id}-button" style="${elStyle(button)}"><button class="rv-btn" style="background:${b.accentColor};color:${b.bgColor}">${e(b.buttonText)}</button></div>
-  </div>`
+  const parts=(b.elements||[]).map(el=>`<div class="editor-element" data-id="${b.id}-${el.type}" style="${elStyle(el)}">${rRVElementContent(b,el.type)}</div>`).join('');
+  return `<div class="rv-b" style="background:${b.bgColor};min-height:100%;position:relative">${parts}</div>`;
 }
 
 function rMP(b){const embed=b.mapsEmbed?`<iframe src="${b.mapsEmbed}" allowfullscreen="" loading="lazy"></iframe>`:`<div class="mp-ph"><div class="mp-pi">📍</div><div class="mp-pt" style="color:${b.textColor}60">Вставьте ссылку для встраивания карты</div></div>`;return`<div class="mp-b" style="background:${b.bgColor}"><div class="sh"><span class="sl" style="color:${b.accentColor}">${e(b.sectionLabel)}</span><div class="stit" style="color:${b.textColor}">${e(b.title)}</div></div><div class="mp-e">${embed}</div><div class="mp-v"><div class="mp-vn" style="color:${b.textColor}">${e(b.venueName)}</div><div class="mp-va" style="color:${b.textColor}70">${e(b.address)}</div>${b.mapsUrl?`<a class="mp-vl" href="${b.mapsUrl}" target="_blank" style="color:${b.accentColor}">Открыть в Google Maps →</a>`:''}</div></div>`}
@@ -785,8 +830,8 @@ function buildProps(b){const bid=b.id;switch(b.type){
 }}
 
 // Array helpers
-function addArr(bid,ak,item){const b=S.blocks.find(x=>x.id===bid);if(!b)return;b[ak]=b[ak]||[];pushH();b[ak].push(item);renderCB(bid);renderRight();markDirty()}
-function rmArr(bid,ak,i){const b=S.blocks.find(x=>x.id===bid);if(!b||!b[ak])return;pushH();b[ak].splice(i,1);renderCB(bid);renderRight();markDirty()}
+function addArr(bid,ak,item){const b=S.blocks.find(x=>x.id===bid);if(!b)return;b[ak]=b[ak]||[];pushH();b[ak].push(item);renderCB(bid);updateBlockSize(bid);renderRight();markDirty()}
+function rmArr(bid,ak,i){const b=S.blocks.find(x=>x.id===bid);if(!b||!b[ak])return;pushH();b[ak].splice(i,1);renderCB(bid);updateBlockSize(bid);renderRight();markDirty()}
 
 // Photo upload
 function upPhoto(bid,key){const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.onchange=ev=>{const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev2=>{upd(bid,key,ev2.target.result);renderRight()};r.readAsDataURL(f)};inp.click()}
@@ -915,7 +960,7 @@ function copyUrl(){navigator.clipboard.writeText(location.href).then(()=>toast('
 function markDirty(){S.dirty=true;document.getElementById('sdot').className='sdot dirty';document.getElementById('slbl').textContent='Несохранено'}
 function saveProject(){const data={v:2,blocks:S.blocks,at:new Date().toISOString()};localStorage.setItem('wc_v2',JSON.stringify(data));S.dirty=false;document.getElementById('sdot').className='sdot saved';document.getElementById('slbl').textContent='Сохранено ✓';toast('💾 Проект сохранён');setTimeout(()=>{if(!S.dirty)document.getElementById('slbl').textContent='Сохранено локально'},4000)}
 function exportJSON(){const blob=new Blob([JSON.stringify({v:2,blocks:S.blocks},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='wedding.json';a.click();toast('📤 JSON экспортирован')}
-function importJSON(){const inp=document.createElement('input');inp.type='file';inp.accept='.json';inp.onchange=ev=>{const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev2=>{try{const d=JSON.parse(ev2.target.result);if(!d.blocks)throw 0;pushH();S.blocks=d.blocks;S.sel=null;render();markDirty();toast('📥 Проект загружен')}catch{toast('❌ Ошибка файла')}};r.readAsText(f)};inp.click()}
+function importJSON(){const inp=document.createElement('input');inp.type='file';inp.accept='.json';inp.onchange=ev=>{const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev2=>{try{const d=JSON.parse(ev2.target.result);if(!d.blocks)throw 0;pushH();S.blocks=d.blocks;S.sel=null;render();updateBlockSize();markDirty();toast('📥 Проект загружен')}catch{toast('❌ Ошибка файла')}};r.readAsText(f)};inp.click()}
 
 // ════════════ FILTER ════════════
 function filterBlocks(q){document.querySelectorAll('.blk').forEach(el=>{const n=el.querySelector('.bn')?.textContent.toLowerCase()||'';el.style.display=!q||n.includes(q.toLowerCase())?'':'none'})}
@@ -969,24 +1014,27 @@ document.addEventListener("dblclick",e=>{
 });
 
 /* ===== BLOCK RESIZE ===== */
-function enableResize(){
-  document.querySelectorAll(".cb").forEach(el=>{
-    if(el.querySelector(".resize-handle")) return;
-    const h=document.createElement("div");
-    h.className="resize-handle";
-    let startY,startH;
-    h.onmousedown=e=>{
-      startY=e.clientY;
-      startH=el.offsetHeight;
+function initBlockResizeHandles(){
+  document.querySelectorAll('.block-resize-handle').forEach(handle=>{
+    if(handle.dataset.ready==='1') return;
+    handle.dataset.ready='1';
+    handle.onmousedown=e=>{
+      e.preventDefault();
+      const blockId=handle.dataset.blockId;
+      const canvas=document.querySelector(`#block-${blockId} .block-canvas`);
+      if(!canvas) return;
+      const startY=e.clientY;
+      const startH=parseFloat(canvas.style.height)||canvas.offsetHeight;
       document.onmousemove=e2=>{
-        el.style.height=(startH+(e2.clientY-startY))+"px";
+        const next=Math.max(200,startH+(e2.clientY-startY));
+        canvas.style.height=next+'px';
+        const block=S.blocks.find(x=>x.id===blockId);
+        if(block) block.height=Math.round(next);
       };
-      document.onmouseup=()=>{document.onmousemove=null};
+      document.onmouseup=()=>{document.onmousemove=null;updateBlockSize(blockId);markDirty();};
     };
-    el.appendChild(h);
   });
 }
-setInterval(enableResize,1000);
 
 /* ===== ANIMATION SELECT ===== */
 function applyAnim(id,type){
