@@ -240,10 +240,36 @@ body{font-family:'Jost',sans-serif;background:var(--panel2);color:#d4cfc8;displa
 .resize-handle{height:6px;cursor:ns-resize;background:rgba(0,0,0,.1)}
 
 
-/* overlay elements */
-.overlay-el{position:absolute;cursor:move;padding:4px 8px;border:1px dashed rgba(0,0,0,.2);background:rgba(255,255,255,.6)}
-.overlay-img{max-width:200px}
-.overlay-el.sel{outline:2px solid var(--gold);border-color:var(--gold)}
+/* overlay elements / transform editor */
+.overlay-el{position:absolute;padding:4px 8px;background:rgba(255,255,255,.6)}
+.overlay-img{padding:0;object-fit:cover}
+.editor-element{
+position:absolute;cursor:move;touch-action:none;user-select:none;
+border:1px dashed rgba(0,0,0,.2);transform-origin:center center;
+}
+.editor-selected{outline:2px solid var(--gold);border-color:var(--gold)}
+.editor-resize-handle{
+position:absolute;width:12px;height:12px;border-radius:2px;
+background:#fff;border:1px solid #111;z-index:2;display:none
+}
+.editor-resize-handle[data-dir="top-left"]{left:-7px;top:-7px;cursor:nwse-resize}
+.editor-resize-handle[data-dir="top-right"]{right:-7px;top:-7px;cursor:nesw-resize}
+.editor-resize-handle[data-dir="bottom-left"]{left:-7px;bottom:-7px;cursor:nesw-resize}
+.editor-resize-handle[data-dir="bottom-right"]{right:-7px;bottom:-7px;cursor:nwse-resize}
+.editor-rotate-handle{
+position:absolute;width:14px;height:14px;border-radius:50%;
+border:1px solid #111;background:var(--gold);top:-28px;left:50%;
+transform:translateX(-50%);cursor:grab;z-index:2;display:none
+}
+.editor-selected .editor-resize-handle,.editor-selected .editor-rotate-handle{display:block}
+.editor-rotate-handle::after{
+content:'';position:absolute;left:50%;top:13px;width:1px;height:14px;background:var(--gold-dk)
+}
+.snap-guide{
+position:absolute;background:rgba(201,169,110,.8);pointer-events:none;z-index:25
+}
+.snap-guide.v{top:0;bottom:0;width:1px}
+.snap-guide.h{left:0;right:0;height:1px}
 .ov-tools{
 position:fixed;right:300px;top:80px;z-index:6000;width:250px;
 background:#1e1c1a;border:1px solid #333;border-radius:8px;padding:10px;color:#ddd
@@ -274,13 +300,6 @@ linear-gradient(90deg,rgba(0,0,0,.08) 1px,transparent 1px);
 background-size:20px 20px;
 pointer-events:none
 }
-.transform-handle{
-position:absolute;width:10px;height:10px;background:#fff;border:1px solid #000;
-}
-.rotate-handle{
-position:absolute;width:12px;height:12px;background:#ff0;border:1px solid #000;border-radius:50%
-}
-
 </style>
 </head>
 <body>
@@ -412,7 +431,7 @@ position:absolute;width:12px;height:12px;background:#ff0;border:1px solid #000;b
 
 <script>
 // ════════════ STATE ════════════
-const S={blocks:[],sel:null,ovSel:null,dev:'desktop',dirty:false,palType:null,dndId:null,dndIdx:null,hist:[],hi:-1};
+const S={blocks:[],sel:null,ovSel:null,dev:'desktop',dirty:false,palType:null,dndId:null,dndIdx:null,hist:[],hi:-1,snapGuides:{}};
 const uid=()=>Math.random().toString(36).slice(2,8);
 const dp=x=>JSON.parse(JSON.stringify(x));
 
@@ -503,7 +522,17 @@ function mkCB(b,i){
 }
 function renderCB(id){const old=document.getElementById('cb-'+id);if(!old)return;const i=S.blocks.findIndex(b=>b.id===id);const ne=mkCB(S.blocks[i],i);old.replaceWith(ne);if(S.sel===id)ne.classList.add('sel');renderOverlayTools()}
 
+const SNAP_GRID=10;
+const SNAP_THRESHOLD=6;
 function ensureOverlays(block){if(!Array.isArray(block.overlays))block.overlays=[];return block.overlays}
+function normalizeElement(el){
+  if(el.width==null) el.width=el.w??140;
+  if(el.height==null) el.height=el.h??50;
+  if(el.rotation==null) el.rotation=el.r??0;
+  el.x=el.x??0;el.y=el.y??0;
+  delete el.w;delete el.h;delete el.r;
+  return el;
+}
 function getOverlayById(oid){
   for(const b of S.blocks){
     const ov=(b.overlays||[]).find(x=>x.id===oid);
@@ -512,23 +541,58 @@ function getOverlayById(oid){
   return null;
 }
 function ovStyle(ov){
-  return `left:${ov.x||0}px;top:${ov.y||0}px;width:${ov.w||140}px;height:${ov.h||50}px;transform:rotate(${ov.r||0}deg);border-radius:${ov.radius||0}px;opacity:${ov.opacity??1};background:${ov.bg||'rgba(255,255,255,.6)'};z-index:${ov.z||2}`;
+  const element=normalizeElement(ov);
+  return `position:absolute;left:${element.x}px;top:${element.y}px;width:${element.width}px;height:${element.height}px;transform:rotate(${element.rotation}deg);border-radius:${element.radius||0}px;opacity:${element.opacity??1};background:${element.bg||'rgba(255,255,255,.6)'};z-index:${element.z||2}`;
+}
+function roundToGrid(v){return Math.round(v/SNAP_GRID)*SNAP_GRID}
+function getPoint(ev){const t=ev.touches?.[0]||ev.changedTouches?.[0];return t?{x:t.clientX,y:t.clientY}:{x:ev.clientX,y:ev.clientY}}
+function findSnap(block,item,next){
+  const wrap=document.getElementById('cb-'+block.id);if(!wrap)return{next,guides:[]};
+  const ww=wrap.clientWidth,wh=wrap.clientHeight;
+  let x=roundToGrid(next.x),y=roundToGrid(next.y);
+  let w=Math.max(40,roundToGrid(next.width)),h=Math.max(30,roundToGrid(next.height));
+  const gx=[],gy=[];
+  const candidatesX=[0,ww/2,ww],candidatesY=[0,wh/2,wh];
+  ensureOverlays(block).forEach(ov=>{
+    const el=normalizeElement(ov);
+    if(ov.id===item.id)return;
+    candidatesX.push(el.x,el.x+el.width/2,el.x+el.width);
+    candidatesY.push(el.y,el.y+el.height/2,el.y+el.height);
+  });
+  const edgesX=[x,x+w/2,x+w],edgesY=[y,y+h/2,y+h];
+  const snap=(edges,candidates,apply)=>edges.forEach(edge=>candidates.forEach(target=>{if(Math.abs(edge-target)<=SNAP_THRESHOLD)apply(target-edge,target)}));
+  snap(edgesX,candidatesX,(delta,target)=>{x+=delta;gx.push(target)});
+  snap(edgesY,candidatesY,(delta,target)=>{y+=delta;gy.push(target)});
+  gx.forEach(v=>S.snapGuides[block.id]=[...(S.snapGuides[block.id]||[]),{t:'v',v}]);
+  gy.forEach(v=>S.snapGuides[block.id]=[...(S.snapGuides[block.id]||[]),{t:'h',v}]);
+  return {next:{x,y,width:w,height:h,rotation:next.rotation},guides:S.snapGuides[block.id]||[]};
+}
+function renderSnapGuides(w,block){
+  (S.snapGuides[block.id]||[]).forEach(g=>{
+    const line=document.createElement('div');
+    line.className='snap-guide '+g.t;
+    if(g.t==='v')line.style.left=g.v+'px';else line.style.top=g.v+'px';
+    w.appendChild(line);
+  });
 }
 function renderOverlaysForBlock(w,block){
   ensureOverlays(block).forEach(ov=>{
+    const el=normalizeElement(ov);
     const node=document.createElement(ov.kind==='image'?'img':'div');
-    node.className='overlay-el'+(ov.kind==='image'?' overlay-img':'')+(S.ovSel===ov.id?' sel':'');
+    node.className='overlay-el editor-element'+(ov.kind==='image'?' overlay-img':'')+(S.ovSel===ov.id?' editor-selected':'');
     node.dataset.ovId=ov.id;node.dataset.blockId=block.id;
     node.style.cssText=ovStyle(ov);
-    if(ov.kind==='image'){node.src=ov.src||'';node.style.padding='0';node.style.overflow='hidden';node.style.borderStyle='solid'}
-    else{node.contentEditable='true';node.style.display='flex';node.style.alignItems='center';node.style.justifyContent='center';node.style.fontSize=(ov.fontSize||16)+'px';node.style.color=ov.color||'#2c2c2c';node.textContent=ov.text||'Текст'}
+    if(ov.kind==='image'){node.src=ov.src||'';node.style.overflow='hidden';node.style.borderStyle='solid'}
+    else{node.contentEditable='true';node.style.display='flex';node.style.alignItems='center';node.style.justifyContent='center';node.style.fontSize=(el.fontSize||16)+'px';node.style.color=el.color||'#2c2c2c';node.textContent=el.text||'Текст'}
     node.addEventListener('mousedown',startOverlayDrag);
+    node.addEventListener('touchstart',startOverlayDrag,{passive:false});
     node.addEventListener('click',ev=>{ev.stopPropagation();S.sel=block.id;S.ovSel=ov.id;render();renderOverlayTools()});
     node.addEventListener('blur',()=>{if(ov.kind==='text'){ov.text=node.textContent||'';markDirty();renderOverlayTools()}});
     node.addEventListener('dblclick',ev=>ev.stopPropagation());
     addOverlayHandles(node);
     w.appendChild(node);
   });
+  renderSnapGuides(w,block);
 }
 
 // ════════════ BLOCK HTML ════════════
@@ -871,7 +935,7 @@ document.body.appendChild(ovTools);
 function addOverlayText(blockId){
   const b=S.blocks.find(x=>x.id===blockId);if(!b)return;
   pushH();const arr=ensureOverlays(b);
-  arr.push({id:uid(),kind:'text',text:'Новый текст',x:40,y:40,w:180,h:56,r:0,radius:8,opacity:1,bg:'rgba(255,255,255,.75)',color:'#2c2c2c',fontSize:16,z:arr.length+2});
+  arr.push({id:uid(),kind:'text',type:'text',text:'Новый текст',x:40,y:40,width:180,height:56,rotation:0,radius:8,opacity:1,bg:'rgba(255,255,255,.75)',color:'#2c2c2c',fontSize:16,z:arr.length+2});
   S.ovSel=arr.at(-1).id;render();markDirty();
 }
 function addOverlayImage(blockId){
@@ -880,49 +944,97 @@ function addOverlayImage(blockId){
   inp.onchange=ev=>{
     const f=ev.target.files?.[0];if(!f)return;
     const r=new FileReader();
-    r.onload=ev2=>{pushH();const arr=ensureOverlays(b);arr.push({id:uid(),kind:'image',src:ev2.target.result,x:40,y:40,w:220,h:140,r:0,radius:12,opacity:1,bg:'transparent',z:arr.length+2});S.ovSel=arr.at(-1).id;render();markDirty();};
+    r.onload=ev2=>{pushH();const arr=ensureOverlays(b);arr.push({id:uid(),kind:'image',type:'image',src:ev2.target.result,x:40,y:40,width:220,height:140,rotation:0,radius:12,opacity:1,bg:'transparent',z:arr.length+2});S.ovSel=arr.at(-1).id;render();markDirty();};
     r.readAsDataURL(f);
   };
   inp.click();
 }
 function addOverlayHandles(el){
-  if(el.querySelector('.transform-handle'))return;
-  const h=document.createElement('div');h.className='transform-handle';h.style.right='-6px';h.style.bottom='-6px';h.style.cursor='nwse-resize';
-  const r=document.createElement('div');r.className='rotate-handle';r.style.top='-20px';r.style.left='50%';r.style.transform='translateX(-50%)';r.style.cursor='grab';
-  h.onmousedown=ev=>startOverlayResize(ev,el.dataset.ovId);
+  if(el.querySelector('.editor-resize-handle'))return;
+  ['top-left','top-right','bottom-left','bottom-right'].forEach(dir=>{
+    const h=document.createElement('div');
+    h.className='editor-resize-handle';
+    h.dataset.dir=dir;
+    h.onmousedown=ev=>startOverlayResize(ev,el.dataset.ovId,dir);
+    h.ontouchstart=ev=>startOverlayResize(ev,el.dataset.ovId,dir);
+    el.appendChild(h);
+  });
+  const r=document.createElement('div');
+  r.className='editor-rotate-handle';
   r.onmousedown=ev=>startOverlayRotate(ev,el.dataset.ovId);
-  el.append(h,r);
+  r.ontouchstart=ev=>startOverlayRotate(ev,el.dataset.ovId);
+  el.appendChild(r);
 }
 function startOverlayDrag(ev){
-  if(ev.target.classList.contains('transform-handle')||ev.target.classList.contains('rotate-handle'))return;
+  if(ev.target.classList.contains('editor-resize-handle')||ev.target.classList.contains('editor-rotate-handle'))return;
   ev.preventDefault();ev.stopPropagation();
   const item=getOverlayById(ev.currentTarget.dataset.ovId);if(!item)return;
-  S.ovSel=item.overlay.id;renderOverlayTools();
-  const rect=ev.currentTarget.parentElement.getBoundingClientRect();
-  const startX=ev.clientX,startY=ev.clientY,ox=item.overlay.x||0,oy=item.overlay.y||0;
-  const mm=e2=>{item.overlay.x=Math.max(0,ox+(e2.clientX-startX));item.overlay.y=Math.max(0,oy+(e2.clientY-startY));renderCB(item.block.id);};
-  const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);markDirty();};
+  S.ovSel=item.overlay.id;renderCB(item.block.id);renderOverlayTools();
+  const start=getPoint(ev);
+  const el=normalizeElement(item.overlay);
+  const ox=el.x,oy=el.y;
+  const mm=e2=>{
+    const p=getPoint(e2);
+    S.snapGuides[item.block.id]=[];
+    const next=findSnap(item.block,item.overlay,{x:Math.max(0,ox+(p.x-start.x)),y:Math.max(0,oy+(p.y-start.y)),width:el.width,height:el.height,rotation:el.rotation}).next;
+    Object.assign(item.overlay,next);
+    renderCB(item.block.id);
+  };
+  const mu=()=>{
+    document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);
+    document.removeEventListener('touchmove',mm);document.removeEventListener('touchend',mu);
+    S.snapGuides[item.block.id]=[];
+    renderCB(item.block.id);
+    markDirty();
+  };
   document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+  document.addEventListener('touchmove',mm,{passive:false});document.addEventListener('touchend',mu);
 }
-function startOverlayResize(ev,oid){
+function startOverlayResize(ev,oid,dir){
   ev.preventDefault();ev.stopPropagation();
   const item=getOverlayById(oid);if(!item)return;
-  const startX=ev.clientX,startY=ev.clientY,ow=item.overlay.w||140,oh=item.overlay.h||60;
-  const mm=e2=>{item.overlay.w=Math.max(40,ow+(e2.clientX-startX));item.overlay.h=Math.max(30,oh+(e2.clientY-startY));renderCB(item.block.id);};
-  const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);markDirty();};
+  const start=getPoint(ev);
+  const el=normalizeElement(item.overlay);
+  const mm=e2=>{
+    const p=getPoint(e2),dx=p.x-start.x,dy=p.y-start.y;
+    let x=el.x,y=el.y,w=el.width,h=el.height;
+    if(dir.includes('right'))w=el.width+dx;
+    if(dir.includes('left')){w=el.width-dx;x=el.x+dx;}
+    if(dir.includes('bottom'))h=el.height+dy;
+    if(dir.includes('top')){h=el.height-dy;y=el.y+dy;}
+    S.snapGuides[item.block.id]=[];
+    const next=findSnap(item.block,item.overlay,{x,y,width:w,height:h,rotation:el.rotation}).next;
+    Object.assign(item.overlay,next);
+    renderCB(item.block.id);
+  };
+  const mu=()=>{
+    document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);
+    document.removeEventListener('touchmove',mm);document.removeEventListener('touchend',mu);
+    S.snapGuides[item.block.id]=[];
+    renderCB(item.block.id);
+    markDirty();
+  };
   document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+  document.addEventListener('touchmove',mm,{passive:false});document.addEventListener('touchend',mu);
 }
 function startOverlayRotate(ev,oid){
   ev.preventDefault();ev.stopPropagation();
   const item=getOverlayById(oid);if(!item)return;
   const el=document.querySelector(`[data-ov-id="${oid}"]`);if(!el)return;
   const rect=el.getBoundingClientRect(),cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
-  const mm=e2=>{item.overlay.r=Math.round(Math.atan2(e2.clientY-cy,e2.clientX-cx)*180/Math.PI);renderCB(item.block.id);};
-  const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);markDirty();};
+  const mm=e2=>{const p=getPoint(e2);item.overlay.rotation=Math.round(Math.atan2(p.y-cy,p.x-cx)*180/Math.PI);renderCB(item.block.id);};
+  const mu=()=>{
+    document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);
+    document.removeEventListener('touchmove',mm);document.removeEventListener('touchend',mu);
+    markDirty();
+  };
   document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+  document.addEventListener('touchmove',mm,{passive:false});document.addEventListener('touchend',mu);
 }
 function updateOverlay(k,v){
   const item=getOverlayById(S.ovSel);if(!item)return;
+  normalizeElement(item.overlay);
+  if(k==='x'||k==='y')v=roundToGrid(v);
   item.overlay[k]=v;renderCB(item.block.id);markDirty();
 }
 function removeOverlay(){
@@ -932,7 +1044,7 @@ function removeOverlay(){
 function renderOverlayTools(){
   const item=getOverlayById(S.ovSel);
   if(!item){ovTools.style.display='none';return}
-  const ov=item.overlay;
+  const ov=normalizeElement(item.overlay);
   ovTools.style.display='block';
   ovTools.innerHTML=`<h4>Объект: ${ov.kind==='image'?'Фото':'Текст'}</h4>
   ${ov.kind==='text'?`<div class="ov-field"><label>Текст</label><textarea oninput="updateOverlay('text',this.value)">${e(ov.text||'')}</textarea></div>`:''}
@@ -941,12 +1053,12 @@ function renderOverlayTools(){
     <div class="ov-field"><label>Y</label><input type="number" value="${ov.y||0}" oninput="updateOverlay('y',parseInt(this.value)||0)"/></div>
   </div>
   <div class="ov-row">
-    <div class="ov-field"><label>Ширина</label><input type="number" value="${ov.w||0}" oninput="updateOverlay('w',parseInt(this.value)||0)"/></div>
-    <div class="ov-field"><label>Высота</label><input type="number" value="${ov.h||0}" oninput="updateOverlay('h',parseInt(this.value)||0)"/></div>
+    <div class="ov-field"><label>Ширина</label><input type="number" value="${ov.width||0}" oninput="updateOverlay('width',parseInt(this.value)||0)"/></div>
+    <div class="ov-field"><label>Высота</label><input type="number" value="${ov.height||0}" oninput="updateOverlay('height',parseInt(this.value)||0)"/></div>
   </div>
   <div class="ov-row">
     <div class="ov-field"><label>Скругление</label><input type="number" value="${ov.radius||0}" oninput="updateOverlay('radius',parseInt(this.value)||0)"/></div>
-    <div class="ov-field"><label>Поворот</label><input type="number" value="${ov.r||0}" oninput="updateOverlay('r',parseInt(this.value)||0)"/></div>
+    <div class="ov-field"><label>Поворот</label><input type="number" value="${ov.rotation||0}" oninput="updateOverlay('rotation',parseInt(this.value)||0)"/></div>
   </div>
   <div class="ov-field"><label>Прозрачность</label><input type="range" min="0.1" max="1" step="0.05" value="${ov.opacity??1}" oninput="updateOverlay('opacity',parseFloat(this.value))"/></div>
   ${ov.kind==='text'?`<div class="ov-row"><div class="ov-field"><label>Цвет текста</label><input type="color" value="${ov.color||'#2c2c2c'}" oninput="updateOverlay('color',this.value)"/></div><div class="ov-field"><label>Фон</label><input type="color" value="${(ov.bg||'#ffffff').startsWith('rgba')?'#ffffff':ov.bg}" oninput="updateOverlay('bg',this.value)"/></div></div>`:''}
