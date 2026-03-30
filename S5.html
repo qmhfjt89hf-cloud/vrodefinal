@@ -243,6 +243,19 @@ body{font-family:'Jost',sans-serif;background:var(--panel2);color:#d4cfc8;displa
 /* overlay elements */
 .overlay-el{position:absolute;cursor:move;padding:4px 8px;border:1px dashed rgba(0,0,0,.2);background:rgba(255,255,255,.6)}
 .overlay-img{max-width:200px}
+.overlay-el.sel{outline:2px solid var(--gold);border-color:var(--gold)}
+.ov-tools{
+position:fixed;right:300px;top:80px;z-index:6000;width:250px;
+background:#1e1c1a;border:1px solid #333;border-radius:8px;padding:10px;color:#ddd
+}
+.ov-tools h4{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);margin-bottom:8px}
+.ov-field{margin-bottom:7px}
+.ov-field label{display:block;font-size:10px;color:#a09888;margin-bottom:3px}
+.ov-field input,.ov-field textarea,.ov-field select{
+width:100%;background:#0d0c0a;border:1px solid #333;color:#ddd;border-radius:5px;padding:6px 8px;font-size:12px
+}
+.ov-field textarea{resize:vertical;min-height:50px}
+.ov-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 
 
 /* ===== ADVANCED EDITOR ===== */
@@ -399,7 +412,7 @@ position:absolute;width:12px;height:12px;background:#ff0;border:1px solid #000;b
 
 <script>
 // ════════════ STATE ════════════
-const S={blocks:[],sel:null,dev:'desktop',dirty:false,palType:null,dndId:null,dndIdx:null,hist:[],hi:-1};
+const S={blocks:[],sel:null,ovSel:null,dev:'desktop',dirty:false,palType:null,dndId:null,dndIdx:null,hist:[],hi:-1};
 const uid=()=>Math.random().toString(36).slice(2,8);
 const dp=x=>JSON.parse(JSON.stringify(x));
 
@@ -452,7 +465,7 @@ function addBlock(type,idx){
 function removeBlock(id){pushH();S.blocks=S.blocks.filter(b=>b.id!==id);if(S.sel===id)S.sel=null;render();markDirty()}
 function moveBlock(id,dir){const i=S.blocks.findIndex(b=>b.id===id),ni=i+dir;if(ni<0||ni>=S.blocks.length)return;pushH();[S.blocks[i],S.blocks[ni]]=[S.blocks[ni],S.blocks[i]];render();markDirty()}
 function dupBlock(id){const i=S.blocks.findIndex(b=>b.id===id);const c={...dp(S.blocks[i]),id:uid()};pushH();S.blocks.splice(i+1,0,c);S.sel=c.id;render();markDirty();toast('Блок продублирован')}
-function selBlock(id){S.sel=id;document.querySelectorAll('.cb').forEach(el=>el.classList.toggle('sel',el.id==='cb-'+id));renderRight()}
+function selBlock(id){S.sel=id;S.ovSel=null;document.querySelectorAll('.cb').forEach(el=>el.classList.toggle('sel',el.id==='cb-'+id));renderRight();renderOverlayTools()}
 function upd(id,k,v){const b=S.blocks.find(b=>b.id===id);if(!b)return;b[k]=v;renderCB(id);markDirty()}
 function updArr(id,ak,i,sk,v){const b=S.blocks.find(b=>b.id===id);if(!b||!b[ak])return;b[ak][i][sk]=v;renderCB(id);markDirty()}
 
@@ -468,10 +481,10 @@ function cvDragLeave(e){if(!e.relatedTarget||!e.currentTarget.contains(e.related
 function render(){
   const site=document.getElementById('csite'),es=document.getElementById('estate');
   site.innerHTML='';
-  if(!S.blocks.length){site.appendChild(es);es.style.display='flex';renderRight();updUB();return}
+  if(!S.blocks.length){site.appendChild(es);es.style.display='flex';renderRight();renderOverlayTools();updUB();return}
   site.appendChild(mkDz(0));
   S.blocks.forEach((b,i)=>{site.appendChild(mkCB(b,i));site.appendChild(mkDz(i+1))});
-  renderRight();updUB();
+  renderRight();renderOverlayTools();updUB();
 }
 function mkDz(idx){const z=document.createElement('div');z.className='dz';z.dataset.idx=idx;z.textContent='+ Добавить блок здесь';return z}
 function mkCB(b,i){
@@ -485,9 +498,38 @@ function mkCB(b,i){
   dh.addEventListener('dragstart',ev=>blkDs(ev,b.id));dh.addEventListener('dragend',blkDe);
   ov.appendChild(dh);w.appendChild(ov);
   const cnt=document.createElement('div');cnt.innerHTML=bHTML(b);w.appendChild(cnt);
+  renderOverlaysForBlock(w,b);
   return w;
 }
-function renderCB(id){const old=document.getElementById('cb-'+id);if(!old)return;const i=S.blocks.findIndex(b=>b.id===id);const ne=mkCB(S.blocks[i],i);old.replaceWith(ne);if(S.sel===id)ne.classList.add('sel')}
+function renderCB(id){const old=document.getElementById('cb-'+id);if(!old)return;const i=S.blocks.findIndex(b=>b.id===id);const ne=mkCB(S.blocks[i],i);old.replaceWith(ne);if(S.sel===id)ne.classList.add('sel');renderOverlayTools()}
+
+function ensureOverlays(block){if(!Array.isArray(block.overlays))block.overlays=[];return block.overlays}
+function getOverlayById(oid){
+  for(const b of S.blocks){
+    const ov=(b.overlays||[]).find(x=>x.id===oid);
+    if(ov) return {block:b,overlay:ov};
+  }
+  return null;
+}
+function ovStyle(ov){
+  return `left:${ov.x||0}px;top:${ov.y||0}px;width:${ov.w||140}px;height:${ov.h||50}px;transform:rotate(${ov.r||0}deg);border-radius:${ov.radius||0}px;opacity:${ov.opacity??1};background:${ov.bg||'rgba(255,255,255,.6)'};z-index:${ov.z||2}`;
+}
+function renderOverlaysForBlock(w,block){
+  ensureOverlays(block).forEach(ov=>{
+    const node=document.createElement(ov.kind==='image'?'img':'div');
+    node.className='overlay-el'+(ov.kind==='image'?' overlay-img':'')+(S.ovSel===ov.id?' sel':'');
+    node.dataset.ovId=ov.id;node.dataset.blockId=block.id;
+    node.style.cssText=ovStyle(ov);
+    if(ov.kind==='image'){node.src=ov.src||'';node.style.padding='0';node.style.overflow='hidden';node.style.borderStyle='solid'}
+    else{node.contentEditable='true';node.style.display='flex';node.style.alignItems='center';node.style.justifyContent='center';node.style.fontSize=(ov.fontSize||16)+'px';node.style.color=ov.color||'#2c2c2c';node.textContent=ov.text||'Текст'}
+    node.addEventListener('mousedown',startOverlayDrag);
+    node.addEventListener('click',ev=>{ev.stopPropagation();S.sel=block.id;S.ovSel=ov.id;render();renderOverlayTools()});
+    node.addEventListener('blur',()=>{if(ov.kind==='text'){ov.text=node.textContent||'';markDirty();renderOverlayTools()}});
+    node.addEventListener('dblclick',ev=>ev.stopPropagation());
+    addOverlayHandles(node);
+    w.appendChild(node);
+  });
+}
 
 // ════════════ BLOCK HTML ════════════
 function bHTML(b){switch(b.type){case'hero':return rH(b);case'countdown':return rCD(b);case'story':return rST(b);case'gallery':return rGL(b);case'schedule':return rSC(b);case'rsvp':return rRV(b);case'map':return rMP(b);case'contacts':return rCT(b);case'quote':return rQT(b);case'music':return rMU(b);case'text':return rTX(b);case'divider':return rDV(b);default:return`<div style="padding:40px;text-align:center;color:#999">${b.type}</div>`}}
@@ -724,7 +766,7 @@ document.addEventListener('keydown',ev=>{
 });
 
 // Click outside
-document.getElementById('carea').addEventListener('click',ev=>{if(!ev.target.closest('.cb')&&!ev.target.closest('.right')){S.sel=null;document.querySelectorAll('.cb').forEach(el=>el.classList.remove('sel'));renderRight()}});
+document.getElementById('carea').addEventListener('click',ev=>{if(!ev.target.closest('.cb')&&!ev.target.closest('.right')){S.sel=null;S.ovSel=null;document.querySelectorAll('.cb').forEach(el=>el.classList.remove('sel'));renderRight();renderOverlayTools()}});
 
 // ════════════ TEMPLATE PREVIEWS ════════════
 (function drawPreviews(){[['tc1',[['#1f1c18',0,10],['#faf7f2',10,5],['#fff',15,6],['#f5f0e8',21,4],['#2c2b29',25,3]]],['tc2',[['#f0ede8',0,10],['#fff',10,6],['#f8f8f8',16,6],['#1a1a1a',22,6]]],['tc3',[['#3d2b1f',0,10],['#f5ebe0',10,6],['#fff',16,7],['#3d2b1f',23,5]]]].forEach(([id,rows])=>{const c=document.getElementById(id);if(!c)return;const ctx=c.getContext('2d');rows.forEach(([color,y,h])=>{ctx.fillStyle=color;ctx.fillRect(0,y,38,h)})})})();
@@ -817,224 +859,120 @@ function publishSite(){
 
 
 
-/* ===== OVERLAY ELEMENTS ===== */
-function addOverlayText(blockId){
-  const block=document.querySelector("#cb-"+blockId);
-  if(!block) return;
-  const el=document.createElement("div");
-  el.className="overlay-el";
-  el.contentEditable=true;
-  el.innerText="Новый текст";
-  el.style.left="40px";
-  el.style.top="40px";
-  makeDraggable(el);
-  block.appendChild(el);
-}
+/* ===== OVERLAY OBJECTS: MOVE + TRANSFORM + SETTINGS ===== */
+const layerPanel=document.createElement("div");
+layerPanel.id="layerPanel";
+document.body.appendChild(layerPanel);
+const ovTools=document.createElement('div');
+ovTools.className='ov-tools';
+ovTools.style.display='none';
+document.body.appendChild(ovTools);
 
+function addOverlayText(blockId){
+  const b=S.blocks.find(x=>x.id===blockId);if(!b)return;
+  pushH();const arr=ensureOverlays(b);
+  arr.push({id:uid(),kind:'text',text:'Новый текст',x:40,y:40,w:180,h:56,r:0,radius:8,opacity:1,bg:'rgba(255,255,255,.75)',color:'#2c2c2c',fontSize:16,z:arr.length+2});
+  S.ovSel=arr.at(-1).id;render();markDirty();
+}
 function addOverlayImage(blockId){
-  const block=document.querySelector("#cb-"+blockId);
-  if(!block) return;
-  const inp=document.createElement("input");
-  inp.type="file";
-  inp.accept="image/*";
-  inp.onchange=e=>{
-    const f=e.target.files[0];
-    if(!f) return;
+  const b=S.blocks.find(x=>x.id===blockId);if(!b)return;
+  const inp=document.createElement('input');inp.type='file';inp.accept='image/*';
+  inp.onchange=ev=>{
+    const f=ev.target.files?.[0];if(!f)return;
     const r=new FileReader();
-    r.onload=ev=>{
-      const img=document.createElement("img");
-      img.src=ev.target.result;
-      img.className="overlay-el overlay-img";
-      img.style.left="40px";
-      img.style.top="40px";
-      makeDraggable(img);
-      block.appendChild(img);
-    };
+    r.onload=ev2=>{pushH();const arr=ensureOverlays(b);arr.push({id:uid(),kind:'image',src:ev2.target.result,x:40,y:40,w:220,h:140,r:0,radius:12,opacity:1,bg:'transparent',z:arr.length+2});S.ovSel=arr.at(-1).id;render();markDirty();};
     r.readAsDataURL(f);
   };
   inp.click();
 }
-
-/* draggable helper */
-function makeDraggable(el){
-  let ox=0,oy=0,drag=false;
-  el.onmousedown=e=>{
-    drag=true;
-    ox=e.offsetX;
-    oy=e.offsetY;
-  };
-  document.addEventListener("mousemove",e=>{
-    if(!drag) return;
-    const rect=el.parentElement.getBoundingClientRect();
-    el.style.left=(e.clientX-rect.left-ox)+"px";
-    el.style.top=(e.clientY-rect.top-oy)+"px";
-  });
-  document.addEventListener("mouseup",()=>drag=false);
+function addOverlayHandles(el){
+  if(el.querySelector('.transform-handle'))return;
+  const h=document.createElement('div');h.className='transform-handle';h.style.right='-6px';h.style.bottom='-6px';h.style.cursor='nwse-resize';
+  const r=document.createElement('div');r.className='rotate-handle';r.style.top='-20px';r.style.left='50%';r.style.transform='translateX(-50%)';r.style.cursor='grab';
+  h.onmousedown=ev=>startOverlayResize(ev,el.dataset.ovId);
+  r.onmousedown=ev=>startOverlayRotate(ev,el.dataset.ovId);
+  el.append(h,r);
 }
+function startOverlayDrag(ev){
+  if(ev.target.classList.contains('transform-handle')||ev.target.classList.contains('rotate-handle'))return;
+  ev.preventDefault();ev.stopPropagation();
+  const item=getOverlayById(ev.currentTarget.dataset.ovId);if(!item)return;
+  S.ovSel=item.overlay.id;renderOverlayTools();
+  const rect=ev.currentTarget.parentElement.getBoundingClientRect();
+  const startX=ev.clientX,startY=ev.clientY,ox=item.overlay.x||0,oy=item.overlay.y||0;
+  const mm=e2=>{item.overlay.x=Math.max(0,ox+(e2.clientX-startX));item.overlay.y=Math.max(0,oy+(e2.clientY-startY));renderCB(item.block.id);};
+  const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);markDirty();};
+  document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+}
+function startOverlayResize(ev,oid){
+  ev.preventDefault();ev.stopPropagation();
+  const item=getOverlayById(oid);if(!item)return;
+  const startX=ev.clientX,startY=ev.clientY,ow=item.overlay.w||140,oh=item.overlay.h||60;
+  const mm=e2=>{item.overlay.w=Math.max(40,ow+(e2.clientX-startX));item.overlay.h=Math.max(30,oh+(e2.clientY-startY));renderCB(item.block.id);};
+  const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);markDirty();};
+  document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+}
+function startOverlayRotate(ev,oid){
+  ev.preventDefault();ev.stopPropagation();
+  const item=getOverlayById(oid);if(!item)return;
+  const el=document.querySelector(`[data-ov-id="${oid}"]`);if(!el)return;
+  const rect=el.getBoundingClientRect(),cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
+  const mm=e2=>{item.overlay.r=Math.round(Math.atan2(e2.clientY-cy,e2.clientX-cx)*180/Math.PI);renderCB(item.block.id);};
+  const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);markDirty();};
+  document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+}
+function updateOverlay(k,v){
+  const item=getOverlayById(S.ovSel);if(!item)return;
+  item.overlay[k]=v;renderCB(item.block.id);markDirty();
+}
+function removeOverlay(){
+  const item=getOverlayById(S.ovSel);if(!item)return;
+  pushH();item.block.overlays=item.block.overlays.filter(x=>x.id!==S.ovSel);S.ovSel=null;render();markDirty();
+}
+function renderOverlayTools(){
+  const item=getOverlayById(S.ovSel);
+  if(!item){ovTools.style.display='none';return}
+  const ov=item.overlay;
+  ovTools.style.display='block';
+  ovTools.innerHTML=`<h4>Объект: ${ov.kind==='image'?'Фото':'Текст'}</h4>
+  ${ov.kind==='text'?`<div class="ov-field"><label>Текст</label><textarea oninput="updateOverlay('text',this.value)">${e(ov.text||'')}</textarea></div>`:''}
+  <div class="ov-row">
+    <div class="ov-field"><label>X</label><input type="number" value="${ov.x||0}" oninput="updateOverlay('x',parseInt(this.value)||0)"/></div>
+    <div class="ov-field"><label>Y</label><input type="number" value="${ov.y||0}" oninput="updateOverlay('y',parseInt(this.value)||0)"/></div>
+  </div>
+  <div class="ov-row">
+    <div class="ov-field"><label>Ширина</label><input type="number" value="${ov.w||0}" oninput="updateOverlay('w',parseInt(this.value)||0)"/></div>
+    <div class="ov-field"><label>Высота</label><input type="number" value="${ov.h||0}" oninput="updateOverlay('h',parseInt(this.value)||0)"/></div>
+  </div>
+  <div class="ov-row">
+    <div class="ov-field"><label>Скругление</label><input type="number" value="${ov.radius||0}" oninput="updateOverlay('radius',parseInt(this.value)||0)"/></div>
+    <div class="ov-field"><label>Поворот</label><input type="number" value="${ov.r||0}" oninput="updateOverlay('r',parseInt(this.value)||0)"/></div>
+  </div>
+  <div class="ov-field"><label>Прозрачность</label><input type="range" min="0.1" max="1" step="0.05" value="${ov.opacity??1}" oninput="updateOverlay('opacity',parseFloat(this.value))"/></div>
+  ${ov.kind==='text'?`<div class="ov-row"><div class="ov-field"><label>Цвет текста</label><input type="color" value="${ov.color||'#2c2c2c'}" oninput="updateOverlay('color',this.value)"/></div><div class="ov-field"><label>Фон</label><input type="color" value="${(ov.bg||'#ffffff').startsWith('rgba')?'#ffffff':ov.bg}" oninput="updateOverlay('bg',this.value)"/></div></div>`:''}
+  <button class="bp" style="width:100%;margin-top:4px" onclick="removeOverlay()">Удалить объект</button>`;
+}
+function refreshLayers(){
+  layerPanel.innerHTML="<b>Layers</b>";
+  S.blocks.forEach(b=>(b.overlays||[]).forEach((ov,i)=>{
+    const d=document.createElement("div");
+    d.className="layer-item";
+    d.textContent=`${TNAMES[b.type]||b.type} • ${ov.kind==='image'?'Фото':'Текст'} ${i+1}`;
+    d.onclick=()=>{S.sel=b.id;S.ovSel=ov.id;render();renderOverlayTools();};
+    layerPanel.appendChild(d);
+  }));
+}
+setInterval(refreshLayers,1200);
 
-/* add buttons in block controls */
 setInterval(()=>{
   document.querySelectorAll(".cbc").forEach(ctrl=>{
     if(ctrl.querySelector(".addTxtBtn")) return;
     const id=ctrl.closest(".cb").id.replace("cb-","");
-    const t=document.createElement("button");
-    t.innerHTML="T";
-    t.className="cc addTxtBtn";
-    t.title="Добавить текст поверх";
-    t.onclick=e=>{e.stopPropagation();addOverlayText(id)};
-    const i=document.createElement("button");
-    i.innerHTML="🖼";
-    i.className="cc";
-    i.title="Добавить картинку поверх";
-    i.onclick=e=>{e.stopPropagation();addOverlayImage(id)};
-    ctrl.prepend(i);
-    ctrl.prepend(t);
+    const t=document.createElement("button");t.innerHTML="T";t.className="cc addTxtBtn";t.title="Добавить текст";t.onclick=e=>{e.stopPropagation();addOverlayText(id)};
+    const i=document.createElement("button");i.innerHTML="🖼";i.className="cc";i.title="Добавить фото";i.onclick=e=>{e.stopPropagation();addOverlayImage(id)};
+    ctrl.prepend(i);ctrl.prepend(t);
   });
-},1000);
-
-
-
-
-/* ===== LAYER PANEL ===== */
-const layerPanel=document.createElement("div");
-layerPanel.id="layerPanel";
-layerPanel.innerHTML="<b>Layers</b>";
-document.body.appendChild(layerPanel);
-
-function refreshLayers(){
-layerPanel.innerHTML="<b>Layers</b>";
-document.querySelectorAll(".overlay-el").forEach((el,i)=>{
-const d=document.createElement("div");
-d.className="layer-item";
-d.textContent="Layer "+(i+1);
-d.onclick=()=>selectLayer(el);
-layerPanel.appendChild(d);
-});
-}
-setInterval(refreshLayers,1500);
-
-function selectLayer(el){
-document.querySelectorAll(".overlay-el").forEach(e=>e.style.outline="none");
-el.style.outline="2px solid #00f";
-}
-
-/* ===== SNAP GRID ===== */
-function enableGrid(block){
-if(block.querySelector(".snap-grid")) return;
-const g=document.createElement("div");
-g.className="snap-grid";
-block.appendChild(g);
-}
-
-setInterval(()=>{
-document.querySelectorAll(".cb").forEach(enableGrid);
-},2000);
-
-/* ===== SNAP DRAG ===== */
-function snap(val){return Math.round(val/20)*20}
-
-document.addEventListener("mousemove",e=>{
-document.querySelectorAll(".overlay-el.dragging").forEach(el=>{
-const rect=el.parentElement.getBoundingClientRect();
-let x=e.clientX-rect.left-el.dragOffsetX;
-let y=e.clientY-rect.top-el.dragOffsetY;
-el.style.left=snap(x)+"px";
-el.style.top=snap(y)+"px";
-});
-});
-
-document.addEventListener("mousedown",e=>{
-if(e.target.classList.contains("overlay-el")){
-const el=e.target;
-el.classList.add("dragging");
-el.dragOffsetX=e.offsetX;
-el.dragOffsetY=e.offsetY;
-}
-});
-
-document.addEventListener("mouseup",()=>{
-document.querySelectorAll(".overlay-el.dragging").forEach(el=>el.classList.remove("dragging"));
-});
-
-/* ===== SCALE + ROTATE ===== */
-function enableTransform(el){
-if(el.querySelector(".transform-handle")) return;
-
-const handle=document.createElement("div");
-handle.className="transform-handle";
-handle.style.right="-6px";
-handle.style.bottom="-6px";
-handle.style.cursor="nwse-resize";
-
-const rotate=document.createElement("div");
-rotate.className="rotate-handle";
-rotate.style.top="-20px";
-rotate.style.left="50%";
-rotate.style.cursor="grab";
-
-el.appendChild(handle);
-el.appendChild(rotate);
-
-let startW,startH,startX,startY;
-
-handle.onmousedown=e=>{
-e.stopPropagation();
-startW=el.offsetWidth;
-startH=el.offsetHeight;
-startX=e.clientX;
-startY=e.clientY;
-
-document.onmousemove=ev=>{
-el.style.width=(startW+(ev.clientX-startX))+"px";
-el.style.height=(startH+(ev.clientY-startY))+"px";
-};
-document.onmouseup=()=>document.onmousemove=null;
-};
-
-rotate.onmousedown=e=>{
-e.stopPropagation();
-const rect=el.getBoundingClientRect();
-const cx=rect.left+rect.width/2;
-const cy=rect.top+rect.height/2;
-
-document.onmousemove=ev=>{
-const ang=Math.atan2(ev.clientY-cy,ev.clientX-cx)*180/Math.PI;
-el.style.transform="rotate("+ang+"deg)";
-};
-document.onmouseup=()=>document.onmousemove=null;
-};
-}
-
-setInterval(()=>{
-document.querySelectorAll(".overlay-el").forEach(enableTransform);
-},1500);
-
-/* ===== GROUPING ===== */
-let group=[];
-
-document.addEventListener("keydown",e=>{
-if(e.key==="g" && e.ctrlKey){
-const g=document.createElement("div");
-g.className="overlay-el";
-g.style.border="2px dashed blue";
-g.style.left="20px";
-g.style.top="20px";
-g.style.width="200px";
-g.style.height="200px";
-makeDraggable(g);
-document.body.appendChild(g);
-}
-});
-
-/* ===== 100+ TEMPLATES ===== */
-const weddingTemplates=[];
-for(let i=1;i<=120;i++){
-weddingTemplates.push("Template "+i);
-}
-
-function listTemplates(){
-alert("Templates available: "+weddingTemplates.length);
-}
+},800);
 
 </script>
 </body>
